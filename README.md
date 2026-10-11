@@ -1,39 +1,19 @@
-# SQL Injection Defense and Encrypted Notes
+# SQL Injection Defense — CodeAlpha
 
-CodeAlpha Cloud Computing Internship project.
+## Features
+- SQLAlchemy ORM for parameterized SQL access; password hashes, AES-256-GCM encrypted notes.
+- Session-bound capability required for reading notes; logout invalidates session.
+- Basic per-process login throttling (8 failed attempts per username/IP per five minutes), security headers, secure cookies when COOKIE_SECURE=1.
+- Automated regression tests for injection attempts, access controls, encryption and throttling.
 
-Flask security demo using SQLAlchemy ORM, password hashing, AES-256-GCM encryption and session plus capability-token authorization.
-
-## Local setup
-
-```bash
-python -m venv .venv
-# Activate the virtual environment
-pip install -r requirements.txt
-python app.py
-```
-
-Open http://127.0.0.1:5000.
-
-## Tests
-
-```bash
-python -m pytest -q
-```
+## API
+POST /api/register, POST /api/login, GET /api/note (X-Capability header), POST /api/logout, GET /health.
 
 ## Configuration
+Required: `AES256_KEY_HEX` (64 random hex characters), `SECRET_KEY` (long random value). Production: `COOKIE_SECURE=1`, `DATABASE_URL` (PostgreSQL). Set these privately in Render; never commit keys.
 
-Before running, set AES256_KEY_HEX to a secure 64-character hex key. Set a persistent SECRET_KEY. Configure HTTPS and COOKIE_SECURE=1 for production.
+## Tests
+`python -m pytest -q`. CI runs on pushes.
 
-## Files
-
-- `app.py`: Flask backend
-- `templates/index.html`: frontend
-- `static/style.css`: UI
-- `tests/test_app.py`: tests
-- `requirements.txt`: dependencies
-- `Procfile`: Gunicorn startup
-
-## Scope
-
-Educational prototype. Deployment and production security review have not been completed.
+## Limitations
+Educational security demo, not a penetration-tested production service. In-memory rate limiting is per process and should be replaced with Redis-backed limits for multiple instances. Add CSRF protection for cookie-authenticated mutations, centralized audit logs, migration management and external security assessment before production. SQLite on ephemeral storage is not persistent.
