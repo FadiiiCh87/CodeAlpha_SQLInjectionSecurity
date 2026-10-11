@@ -1,4 +1,5 @@
-import os, secrets
+import os, secrets, time, logging
+from collections import defaultdict, deque
 from flask import Flask, jsonify, request, render_template, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -8,6 +9,17 @@ app.secret_key=os.getenv('SECRET_KEY',secrets.token_hex(32))
 app.config['SQLALCHEMY_DATABASE_URI']=os.getenv('DATABASE_URL','sqlite:///security.db').replace('postgres://','postgresql://',1)
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE')=='1')
 db=SQLAlchemy(app)
+login_attempts=defaultdict(deque)
+logging.basicConfig(level=logging.INFO)
+@app.after_request
+def security_headers(response):
+ response.headers['X-Content-Type-Options']='nosniff'
+ response.headers['X-Frame-Options']='DENY'
+ response.headers['Referrer-Policy']='strict-origin-when-cross-origin'
+ response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'"
+ response.headers['Cache-Control']='no-store'
+ return response
+
 class User(db.Model):
  id=db.Column(db.Integer,primary_key=True)
  username=db.Column(db.String(80),unique=True,nullable=False)
@@ -28,14 +40,24 @@ def health():return jsonify(status='ok')
 @app.post('/api/register')
 def register():
  data=request.get_json(silent=True) or {};username=str(data.get('username','')).strip();password=str(data.get('password',''));note=str(data.get('note',''))
- if not (3<=len(username)<=80 and len(password)>=12 and len(note)<=2000):return jsonify(error='Username 3-80, password 12+ and note max 2000 required'),400
+ if not (3<=len(username)<=80 and username.replace('_','').isalnum() and 12<=len(password)<=256 and len(note)<=2000):return jsonify(error='Username 3-80, password 12+ and note max 2000 required'),400
  if User.query.filter_by(username=username).first():return jsonify(error='Username exists'),409
  user=User(username=username,password_hash=generate_password_hash(password),encrypted_note=encrypt(note));db.session.add(user);db.session.commit()
  return jsonify(status='registered'),201
 @app.post('/api/login')
 def login():
- data=request.get_json(silent=True) or {};user=User.query.filter_by(username=str(data.get('username',''))).first()
- if not user or not check_password_hash(user.password_hash,str(data.get('password',''))):return jsonify(error='Invalid credentials'),401
+ data=request.get_json(silent=True) or {}
+ username=str(data.get('username',''))[:80]
+ identifier=(request.remote_addr or 'unknown',username.lower())
+ now=time.monotonic();attempts=login_attempts[identifier]
+ while attempts and now-attempts[0]>300:attempts.popleft()
+ if len(attempts)>=8:return jsonify(error='Too many login attempts; retry later'),429
+ user=User.query.filter_by(username=username).first()
+ if not user or not check_password_hash(user.password_hash,str(data.get('password',''))):
+  attempts.append(now)
+  app.logger.warning('Rejected login attempt for account %s',username)
+  return jsonify(error='Invalid credentials'),401
+ attempts.clear()
  session.clear();session['uid']=user.id;session['capability']=secrets.token_urlsafe(32)
  return jsonify(status='authenticated',capability=session['capability'])
 @app.get('/api/note')
